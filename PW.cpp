@@ -6,9 +6,15 @@
 #include <chrono>   // Задержка времени
 
 #include <thread>   // Управление потоками
-#include <mutex>    // Очерёдность потоков
+#include <mutex>    // Очередь вывода на консоль для потоков
 
 #include <windows.h>// Для скрытия курсора и обработки нажатий
+
+
+
+/* ---   Глабальные переменные   --- */
+std::mutex mtx_Print;
+//---------------------------------------------------------------------
 
 
 
@@ -85,38 +91,69 @@ void tf_GameInput(int8_t& out_Command)
 }
 
 // Рендер графики
-void tf_GraphicsRendering(int8_t& in_Command, uint8_t& out_Position)
+void tf_GraphicsRendering(uint8_t& out_Position)
 {
     unsigned int curPoints = 0;
     uint16_t time = 1000;
+
+    mtx_Print.lock();
+    {
+        std::cout << "Кол. очков: ";
+
+        printf("\x1B[%d;%df", 3, 0);
+        std::cout
+            << "------------------------------------------------------------------------------------------------------------------------" << '\n'   // 3
+            << "                                                                                                                        " << '\n'   // 4
+            << "                                                                                                                        " << '\n'   // 5
+            << "                                                                                                                        " << '\n'   // 6
+            << "                                                                                                                        " << '\n'   // 7
+            << "------------------------------------------------------------------------------------------------------------------------" << '\n'   // 8
+            << std::endl;
+    }
+    mtx_Print.unlock();
+
+
+
+    while (true)
+    {
+        /* ---   Отрисовка   --- */
+
+        // Количество очков:
+        ++curPoints;
+
+        mtx_Print.lock();
+        {
+            printf("\x1B[%d;%df", 1, 13);
+            std::cout << curPoints << std::endl;
+        }
+        mtx_Print.unlock();
+        //----------------------------------------
+
+
+
+        // Задержка времени: имитация скорости бега
+        if (time > 50)
+            time = 100 - (curPoints);
+        else
+            time = 50;
+        std::this_thread::sleep_for(std::chrono::milliseconds(time));
+    }
+}
+
+// Отображение персонажа
+void tf_DinoRendering(const int8_t& in_Command, uint8_t& out_Position)
+{
     int upperBorder = 4;
     int lowerBorder = out_Position = 7;
     bool bFall = false;
+    uint8_t prePosition = 6;
 
-
-
-    std::cout << "Кол. очков: ";
-
-    printf("\x1B[%d;%df", upperBorder - 1, 0);
-
-    std::cout
-        << "------------------------------------------------------------------------------------------------------------------------" << '\n'   // 3
-        << "                                                                                                                        " << '\n'   // 4
-        << "                                                                                                                        " << '\n'   // 5
-        << "                                                                                                                        " << '\n'   // 6
-        << "                                                                                                                        " << '\n'   // 7
-        << "------------------------------------------------------------------------------------------------------------------------" << '\n'   // 8
-        << std::endl;
-
-
-
-    while (in_Command)
+    while (true)
     {
         // Обработка команд
         switch (in_Command)
         {
         case 1:
-
             if (out_Position == lowerBorder)
             {
                 --out_Position;
@@ -133,6 +170,7 @@ void tf_GraphicsRendering(int8_t& in_Command, uint8_t& out_Position)
             }
 
             break;
+
         case 2:
             out_Position = lowerBorder;
 
@@ -151,30 +189,25 @@ void tf_GraphicsRendering(int8_t& in_Command, uint8_t& out_Position)
 
         /* ---   Отрисовка   --- */
 
-        // Количество очков:
-        ++curPoints;
-        printf("\x1B[%d;%df", 1, 13);
-        std::cout << curPoints << std::endl;
-
         // Дино:
-        for (int i = upperBorder; i <= lowerBorder; ++i)
+        if (prePosition != out_Position)
         {
-            printf("\x1B[%d;%df", i, 3);
-            std::cout << " ";
-        }
 
-        printf("\x1B[%d;%df", int(out_Position), 3);
-        std::cout << "$" << std::endl;
+            mtx_Print.lock();
+            {
+                printf("\x1B[%d;%df", int(prePosition), 3);
+                std::cout << " " << std::endl;
+
+                printf("\x1B[%d;%df", int(out_Position), 3);
+                std::cout << "$" << std::endl;
+            }
+            mtx_Print.unlock();
+            prePosition = out_Position;
+        }
         //----------------------------------------
 
-
-
-        // Задержка времени: имитация скорости бега
-        if (time > 50)
-            time = 100 - (curPoints);
-        else
-            time = 50;
-        std::this_thread::sleep_for(std::chrono::milliseconds(time));
+        // Скорость отображения персонажа
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 }
 
@@ -224,15 +257,19 @@ int main()
     /* ---   Потоки   --- */
 
     // Ввод данных
-    std::thread t_GameInput = std::thread(tf_GameInput, std::ref(curCommand));
+    std::thread t_GameInput(tf_GameInput, std::ref(curCommand));
     t_GameInput.detach();
 
     // Рендер графики
-    std::thread t_GraphicsRendering = std::thread(tf_GraphicsRendering, std::ref(curCommand), std::ref(curPosition));
+    std::thread t_GraphicsRendering(tf_GraphicsRendering, std::ref(curPosition));
     t_GraphicsRendering.detach();
 
+    // Отображение персонажа
+    std::thread t_Dino(tf_DinoRendering, std::ref(curCommand), std::ref(curPosition));
+    t_Dino.detach();
+
     // Проверка препятствий
-    std::thread t_CheckingObstacles = std::thread(tf_CheckingObstacles, std::ref(curPosition));
+    std::thread t_CheckingObstacles(tf_CheckingObstacles, std::ref(curPosition));
     t_CheckingObstacles.detach();
     //----------------------------------------
 
@@ -243,9 +280,11 @@ int main()
     curPosition = 0;
 
 
-
-    printf("\x1B[%d;%df", 10, 0);
-    system("pause");
-
+    mtx_Print.lock();
+    {
+        printf("\x1B[%d;%df", 10, 0);
+        system("pause");
+    }
+    mtx_Print.unlock();
     return 0;
 }
