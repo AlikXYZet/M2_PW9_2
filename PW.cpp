@@ -17,6 +17,9 @@
 
 // Организация очереди вывода на консоль
 std::mutex mtx_Print;
+
+// Флаг выхода из цикла во всех потоках и завершение программы
+bool bNotEnd = true;
 //---------------------------------------------------------------------
 
 
@@ -30,6 +33,9 @@ public:
     /*   Конструкторы   */
     Obstacle(int in_location = 120) : location(in_location)
     {
+        // Использовать текущее время в качестве начального значения для генератора псевдослучайных чисел
+        srand(time(0));
+
         type = rand() % 6;
         restructure();
     };
@@ -189,13 +195,14 @@ void tf_GameInput(int8_t& out_Command)
     DWORD dr;
     INPUT_RECORD rec;
 
-    while (out_Command)
+    while (bNotEnd)
     {
+        // Ожидание ввода команды
         ReadConsoleInput(s_in, &rec, 1, &dr);
 
         if (rec.EventType == KEY_EVENT)
+        {
             if (rec.Event.KeyEvent.bKeyDown)
-            {
                 switch (rec.Event.KeyEvent.wVirtualKeyCode)
                 {
                     // Клавиши "прыжок":
@@ -214,12 +221,10 @@ void tf_GameInput(int8_t& out_Command)
 
                     // Клавиши "выход":
                 case VK_ESCAPE:
-                    out_Command = 0;
+                    bNotEnd = false;
                     break;
                 }
-            }
             else
-            {
                 switch (out_Command)
                 {
                 case 1:
@@ -246,12 +251,16 @@ void tf_GameInput(int8_t& out_Command)
                     }
                     break;
                 }
-            }
+        }
     }
+
+    // Debug:
+    //printf("\x1B[%d;%df", 20, 0);
+    //std::cout << "End: GameInput";
 }
 
 // Рендер графики
-void tf_GraphicsRendering(const int8_t& in_Command, uint8_t& out_Position, std::vector<Obstacle>& in_obstacles)
+void tf_GraphicsRendering(const int8_t& in_Command, std::vector<Obstacle>& in_obstacles)
 {
     unsigned int curPoints = 0;
     uint16_t time = 1000;
@@ -276,7 +285,7 @@ void tf_GraphicsRendering(const int8_t& in_Command, uint8_t& out_Position, std::
 
 
 
-    while (in_Command)
+    while (bNotEnd)
     {
         /* ---   Отрисовка   --- */
 
@@ -286,7 +295,7 @@ void tf_GraphicsRendering(const int8_t& in_Command, uint8_t& out_Position, std::
         mtx_Print.lock();
         {
             printf("\x1B[%d;%df", 1, 13);
-            std::cout << curPoints << std::endl;
+            std::cout << curPoints;
         }
         mtx_Print.unlock();
 
@@ -323,6 +332,10 @@ void tf_GraphicsRendering(const int8_t& in_Command, uint8_t& out_Position, std::
             time = 10;
         std::this_thread::sleep_for(std::chrono::milliseconds(time));
     }
+
+    // Debug:
+    //printf("\x1B[%d;%df", 21, 0);
+    //std::cout << "End: GraphicsRendering";
 }
 
 // Отображение персонажа
@@ -333,7 +346,7 @@ void tf_DinoRendering(const int8_t& in_Command, uint8_t& out_Position)
     uint8_t bFall = 0;
     uint8_t prePosition = 6;
 
-    while (in_Command)
+    while (bNotEnd)
     {
         // Обработка команд
         switch (in_Command)
@@ -398,15 +411,41 @@ void tf_DinoRendering(const int8_t& in_Command, uint8_t& out_Position)
         // Скорость отображения персонажа
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+
+    // Debug:
+    //printf("\x1B[%d;%df", 22, 0);
+    //std::cout << "End: DinoRendering";
 }
 
 // Проверка препятствий
-void tf_CheckingObstacles(const int8_t& in_Command, const uint8_t& out_Position)
+void tf_CheckingObstacles(int8_t& out_Command, const uint8_t& in_Position, const std::vector<Obstacle>& in_obstacles)
 {
-    while (in_Command)
-    {
+    int lowerBorder = 7;
+    uint8_t bufCheackPosition;
+    int bufLocation;
 
+    // Ожидание первого препятствия
+    while (!(in_obstacles.data())) {}
+
+    while (bNotEnd)
+    {
+        bufLocation = in_obstacles.data()->location;
+        if (bufLocation == 3
+            || bufLocation + in_obstacles.data()->width - 1 == 3)
+        {
+            bufCheackPosition = lowerBorder - in_obstacles.data()->height;
+
+            if (bufCheackPosition == in_Position
+                || bufCheackPosition + in_obstacles.data()->length - 1 == in_Position)
+            {
+                bNotEnd = false;
+            }
+        }
     }
+
+    // Debug:
+    //printf("\x1B[%d;%df", 23, 0);
+    //std::cout << "End: CheckingObstacles";
 }
 //---------------------------------------------------------------------
 
@@ -418,9 +457,6 @@ int main()
 
     // Локализация
     setlocale(LC_ALL, "Russian");
-
-    // Использовать текущее время в качестве начального значения для генератора псевдослучайных чисел
-    srand(time(0));
 
     // Скрытие курсора консоли
     auto handle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -450,28 +486,31 @@ int main()
 
     // Ввод данных
     std::thread t_GameInput(tf_GameInput, std::ref(curCommand));
+    t_GameInput.detach();   // По окончании программы, игнорируем данный поток
 
     // Рендер графики
-    std::thread t_GraphicsRendering(tf_GraphicsRendering, std::ref(curCommand), std::ref(curPosition), std::ref(obstacles));
+    std::thread t_GraphicsRendering(tf_GraphicsRendering, std::ref(curCommand), std::ref(obstacles));
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Отображение персонажа
     std::thread t_Dino(tf_DinoRendering, std::ref(curCommand), std::ref(curPosition));
 
     // Проверка препятствий
-    std::thread t_CheckingObstacles(tf_CheckingObstacles, std::ref(curCommand), std::ref(curPosition));
+    std::thread t_CheckingObstacles(tf_CheckingObstacles, std::ref(curCommand), std::ref(curPosition), std::ref(obstacles));
     //----------------------------------------
 
 
 
-    // Бесконечный цикл ожидания "Esc"
-    while (curCommand != 0) {}
+    // Бесконечный цикл ожидания "Esc" или проигрыша
+    while (bNotEnd) {}
 
     // Очистка потоков
-    t_GameInput.join();
     t_GraphicsRendering.join();
     t_Dino.join();
     t_CheckingObstacles.join();
+
+    printf("\x1B[%d;%df", curPosition, 3);
+    std::cout << 0 << std::endl;
 
     printf("\x1B[%d;%df", 10, 0);
     system("pause");
